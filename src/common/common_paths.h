@@ -31,6 +31,7 @@
 #define JAP_DIR "JAP"
 
 // Subdirs in the User dir returned by GetUserPath(D_USER_IDX)
+#define CITRA_LOCAL "Citra local"
 #define CONFIG_DIR "config"
 #define GAMECONFIG_DIR "game_config"
 #define MAPS_DIR "maps"
