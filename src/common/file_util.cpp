@@ -26,6 +26,9 @@
 #define stat _stat64
 #define fstat _fstat64
 #define fileno _fileno
+// Windows version, at least Vista is required to obtain AppData Path
+#define WINVER 0x0600
+#define _WIN32_WINNT 0x0600
 #else
 #ifdef __APPLE__
 #include <sys/param.h>
@@ -594,6 +597,22 @@ std::string& GetExeDirectory() {
     }
     return exe_path;
 }
+
+std::string& AppDataLocalDirectory() {
+    // Windows Vista or later only
+    static std::string local_path;
+    if (local_path.empty()) {
+        PWSTR pw_local_path = 0;
+        wchar_t* wchar_local_path;
+        SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, NULL, &pw_local_path);
+        wchar_local_path = pw_local_path;
+        local_path = Common::UTF16ToUTF8(wchar_local_path);
+        // Freeing memory
+        CoTaskMemFree(static_cast<void*>(pw_local_path));
+        // LOG_INFO(Common_Filesystem, "Recognized appdata path %s", local_path.c_str());
+    }
+    return local_path;
+}
 #else
 /**
  * @return The user’s home directory on POSIX systems
@@ -670,7 +689,13 @@ const std::string& GetUserPath(const unsigned int DirIDX, const std::string& new
     // Set up all paths and files on the first run
     if (paths[D_USER_IDX].empty()) {
 #ifdef _WIN32
+        // Not using PathAppend ( / ) for some reason
         paths[D_USER_IDX] = GetExeDirectory() + DIR_SEP USERDATA_DIR DIR_SEP;
+        if (!FileUtil::IsDirectory(paths[D_USER_IDX])) {
+            paths[D_USER_IDX] =
+                AppDataLocalDirectory() + DIR_SEP + CITRA_LOCAL + DIR_SEP USERDATA_DIR DIR_SEP;
+        }
+        LOG_INFO(Common_Filesystem, "Using directory: %s", paths[D_USER_IDX].c_str());
         paths[D_CONFIG_IDX] = paths[D_USER_IDX] + CONFIG_DIR DIR_SEP;
         paths[D_CACHE_IDX] = paths[D_USER_IDX] + CACHE_DIR DIR_SEP;
 #else
