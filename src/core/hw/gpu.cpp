@@ -10,6 +10,8 @@
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
+#include "common/timer.h"
+#include "common/thread.h"
 #include "common/vector_math.h"
 #include "core/core_timing.h"
 #include "core/hle/service/gsp_gpu.h"
@@ -41,12 +43,11 @@ static u64 frame_count;
 /// True if the last frame was skipped
 static bool last_skip_frame;
 /// Start clock for frame limiter
-static std::chrono::steady_clock::time_point update_time_point =
-    std::chrono::steady_clock::now();
+static u32 time_point = Common::Timer::GetTimeMs();
 /// Frame time for last frame
-static std::chrono::steady_clock::duration last_frame_time;
+static u32 last_frame_time;
 /// Frame time for current frame
-static std::chrono::steady_clock::duration frame_time;
+static u32 frame_time;
 /// Frame rate mode(true for 30fps mode)
 static bool thirty_fps_mode;
 
@@ -528,26 +529,29 @@ template void Write<u8>(u32 addr, const u8 data);
 
 static void FrameLimiter() {
     const u32 frame_limit = 60;
-    const auto milliseconds_per_frame =
-        std::chrono::milliseconds(1000 / frame_limit);
+    int32_t time_to_sleep;
+    const float milliseconds_per_frame =1000 / frame_limit;
+    const u32 excess = last_frame_time - 1000 / 60;
     if (thirty_fps_mode && frame_time < last_frame_time) {
-        if (frame_time < milliseconds_per_frame) {
-            std::this_thread::sleep_for(milliseconds_per_frame - (frame_time + (last_frame_time - std::chrono::microseconds(1000000 / 60))));
+        time_to_sleep = milliseconds_per_frame - (frame_time + excess);
+        if (frame_time < milliseconds_per_frame && time_to_sleep > 0) {
+            Common::SleepCurrentThread(time_to_sleep);
         }
     } else if (!thirty_fps_mode && frame_time < milliseconds_per_frame) {
-        std::this_thread::sleep_for(milliseconds_per_frame - frame_time);
+        time_to_sleep = milliseconds_per_frame - frame_time;
+        Common::SleepCurrentThread(time_to_sleep);
     }
 }
 static void frame_rate_mode_check() {
     static bool first_check = false;
-    if (first_check && frame_time > std::chrono::microseconds(16667)) {
+    if (first_check && frame_time > 1000/60) {
         thirty_fps_mode = true;
         return;
     } else if (!first_check) {
         thirty_fps_mode = false;
     }
-    if (last_frame_time < std::chrono::microseconds(16667)) {
-        if (frame_time > std::chrono::microseconds(16667)) {
+    if (last_frame_time < 1000/60) {
+        if (frame_time > 1000/60) {
             first_check = true;
         } else first_check = false;
     }
@@ -585,22 +589,24 @@ static void VBlankCallback(u64 userdata, int cycles_late) {
     // Check for user input updates
     Service::HID::Update();
 
-    // Reschedule recurrent event
-    CoreTiming::ScheduleEvent(frame_ticks - cycles_late, vblank_event);
-
-    frame_time = std::chrono::steady_clock::now() - update_time_point;
+    frame_time = Common::Timer::GetTimeMs() - time_point;
 
     // messy hack for determining 30 fps games
     if (!Settings::values.use_vsync) {
         if (Settings::values.toggle_framelimit) {
             frame_rate_mode_check();
-                FrameLimiter();
-        } else {
+            FrameLimiter();
+        }
+        else {
             thirty_fps_mode = false;
         }
     }
     last_frame_time = frame_time;
-    update_time_point = std::chrono::steady_clock::now();
+
+    // Reschedule recurrent event
+    CoreTiming::ScheduleEvent(frame_ticks - cycles_late, vblank_event);
+
+    time_point = Common::Timer::GetTimeMs();
 }
 
 /// Initialize hardware
@@ -637,6 +643,7 @@ void Init() {
     g_skip_frame = false;
     thirty_fps_mode = false;
     frame_count = 0;
+    last_frame_time = 0;
 
     vblank_event = CoreTiming::RegisterEvent("GPU::VBlankCallback", VBlankCallback);
     CoreTiming::ScheduleEvent(frame_ticks, vblank_event);
