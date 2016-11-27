@@ -4,11 +4,14 @@
 
 #include <cstring>
 #include <numeric>
+#include <thread>
 #include <type_traits>
 #include "common/color.h"
 #include "common/common_types.h"
 #include "common/logging/log.h"
 #include "common/microprofile.h"
+#include "common/timer.h"
+#include "common/thread.h"
 #include "common/vector_math.h"
 #include "core/core_timing.h"
 #include "core/hle/service/gsp_gpu.h"
@@ -39,6 +42,14 @@ static int vblank_event;
 static u64 frame_count;
 /// True if the last frame was skipped
 static bool last_skip_frame;
+/// Start clock for frame limiter
+static u32 time_point = Common::Timer::GetTimeMs();
+/// Frame time for last frame
+static u32 last_frame_time;
+/// Frame time for current frame
+static u32 frame_time;
+/// Frame rate mode(true for 30fps mode)
+static bool thirty_fps_mode;
 
 template <typename T>
 inline void Read(T& var, const u32 raw_addr) {
@@ -516,11 +527,41 @@ template void Write<u32>(u32 addr, const u32 data);
 template void Write<u16>(u32 addr, const u16 data);
 template void Write<u8>(u32 addr, const u8 data);
 
+static void FrameLimiter() {
+    const u32 frame_limit = 60;
+    int32_t time_to_sleep;
+    const float milliseconds_per_frame =1000 / frame_limit;
+    const u32 excess = last_frame_time - 1000 / 60;
+    if (thirty_fps_mode && frame_time < last_frame_time) {
+        time_to_sleep = milliseconds_per_frame - (frame_time + excess);
+        if (frame_time < milliseconds_per_frame && time_to_sleep > 0) {
+            Common::SleepCurrentThread(time_to_sleep);
+        }
+    } else if (!thirty_fps_mode && frame_time < milliseconds_per_frame) {
+        time_to_sleep = milliseconds_per_frame - frame_time;
+        Common::SleepCurrentThread(time_to_sleep);
+    }
+}
+static void frame_rate_mode_check() {
+    static bool first_check = false;
+    if (first_check && frame_time > 1000/60) {
+        thirty_fps_mode = true;
+        return;
+    } else if (!first_check) {
+        thirty_fps_mode = false;
+    }
+    if (last_frame_time < 1000/60) {
+        if (frame_time > 1000/60) {
+            first_check = true;
+        } else first_check = false;
+    }
+}
 /// Update hardware
 static void VBlankCallback(u64 userdata, int cycles_late) {
     frame_count++;
     last_skip_frame = g_skip_frame;
     g_skip_frame = (frame_count & Settings::values.frame_skip) != 0;
+    bool is_skipped = false;
 
     // Swap buffers based on the frameskip mode, which is a little bit tricky. When
     // a frame is being skipped, nothing is being rendered to the internal framebuffer(s).
@@ -532,6 +573,9 @@ static void VBlankCallback(u64 userdata, int cycles_late) {
          last_skip_frame != g_skip_frame) ||
         Settings::values.frame_skip == 0) {
         VideoCore::g_renderer->SwapBuffers();
+        is_skipped = false;
+    } else {
+        is_skipped = true;
     }
 
     // Signal to GSP that GPU interrupt has occurred
@@ -545,8 +589,24 @@ static void VBlankCallback(u64 userdata, int cycles_late) {
     // Check for user input updates
     Service::HID::Update();
 
+    frame_time = Common::Timer::GetTimeMs() - time_point;
+
+    // messy hack for determining 30 fps games
+    if (!Settings::values.use_vsync) {
+        if (Settings::values.toggle_framelimit) {
+            frame_rate_mode_check();
+            FrameLimiter();
+        }
+        else {
+            thirty_fps_mode = false;
+        }
+    }
+    last_frame_time = frame_time;
+
     // Reschedule recurrent event
     CoreTiming::ScheduleEvent(frame_ticks - cycles_late, vblank_event);
+
+    time_point = Common::Timer::GetTimeMs();
 }
 
 /// Initialize hardware
@@ -581,7 +641,9 @@ void Init() {
 
     last_skip_frame = false;
     g_skip_frame = false;
+    thirty_fps_mode = false;
     frame_count = 0;
+    last_frame_time = 0;
 
     vblank_event = CoreTiming::RegisterEvent("GPU::VBlankCallback", VBlankCallback);
     CoreTiming::ScheduleEvent(frame_ticks, vblank_event);
