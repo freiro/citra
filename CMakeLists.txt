@@ -62,8 +62,12 @@ if (NOT DEFINED ARCHITECTURE)
 endif()
 message(STATUS "Target architecture: ${ARCHITECTURE}")
 
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+IF (WIN32 AND (${CMAKE_CXX_COMPILER_ID}  MATCHES "Clang"))
+    set(CMAKE_CXX_FLAGS "-Xclang -std=c++14")# -Qunused-arguments  -Xclang -Wno-missing-braces ")
+ELSE()
+    set(CMAKE_CXX_STANDARD 14)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ENDIF()
 
 if (NOT MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-attributes")
@@ -98,7 +102,7 @@ else()
     # /Zo - enahnced debug info for optimized builds
     set(CMAKE_C_FLAGS   "/W3 /MP /Zi /Zo" CACHE STRING "" FORCE)
     # /EHsc - C++-only exception handling semantics
-    set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} /EHsc" CACHE STRING "" FORCE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_C_FLAGS} /EHsc" CACHE STRING "" FORCE)
 
     # /MDd - Multi-threaded Debug Runtime DLL
     set(CMAKE_C_FLAGS_DEBUG   "/Od /MDd" CACHE STRING "" FORCE)
