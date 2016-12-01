@@ -62,7 +62,7 @@ if (NOT DEFINED ARCHITECTURE)
 endif()
 message(STATUS "Target architecture: ${ARCHITECTURE}")
 
-IF (WIN32 AND (${CMAKE_CXX_COMPILER_ID}  MATCHES "Clang"))
+IF ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" AND "${CMAKE_CXX_SIMULATE_ID}" STREQUAL "MSVC")
     set(CMAKE_CXX_FLAGS "-Xclang -std=c++14")# -Qunused-arguments  -Xclang -Wno-missing-braces ")
 ELSE()
     set(CMAKE_CXX_STANDARD 14)
